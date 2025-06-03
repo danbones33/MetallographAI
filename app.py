@@ -198,63 +198,29 @@ def live_demo_feed():
                 pil_image_original = Image.open(image_path).convert('RGB')
                 cv_image_bgr_original = cv2.cvtColor(np.array(pil_image_original), cv2.COLOR_RGB2BGR)
 
-                # Process with BOTH grain boundary models directly
-                print(f"DEBUG: Processing image with BOTH models directly")
+                # Process with standard grain boundary model only
+                print(f"DEBUG: Processing image with grainboundary_model_v1.pt")
                 
-                # Model 1: Standard grain boundary model
-                standard_result = {}
-                standard_overlay = cv_image_bgr_original.copy()
-                try:
-                    print(f"DEBUG: Processing with grainboundary_model_v1.pt")
-                    standard_result = handler.run_inference(
-                        image_data=cv_image_bgr_original.copy(),
-                        model_name="grainboundary_model_v1.pt"
-                    )
-                    standard_overlay = img_processor.create_overlay(cv_image_bgr_original.copy(), standard_result)
-                    print(f"DEBUG: Standard model - Grains: {standard_result.get('grain_count', 'N/A')}, Avg Size: {standard_result.get('avg_grain_size', 'N/A')}")
-                except Exception as e:
-                    print(f"DEBUG: Error with standard model: {e}")
+                current_result = handler.run_inference(
+                    image_data=cv_image_bgr_original.copy(),
+                    model_name="grainboundary_model_v1.pt"
+                )
 
-                # Model 2: Enhanced (Ag) grain boundary model  
-                enhanced_result = {}
-                enhanced_overlay = cv_image_bgr_original.copy()
-                try:
-                    print(f"DEBUG: Processing with grainboundary_model_ag_v1.pt")
-                    enhanced_result = handler.run_inference(
-                        image_data=cv_image_bgr_original.copy(),
-                        model_name="grainboundary_model_ag_v1.pt"
-                    )
-                    enhanced_overlay = img_processor.create_overlay(cv_image_bgr_original.copy(), enhanced_result)
-                    print(f"DEBUG: Enhanced model - Grains: {enhanced_result.get('grain_count', 'N/A')}, Avg Size: {enhanced_result.get('avg_grain_size', 'N/A')}")
-                except Exception as e:
-                    print(f"DEBUG: Error with enhanced model: {e}")
+                overlay_cv_image = img_processor.create_overlay(cv_image_bgr_original.copy(), current_result)
 
-                # Use standard model for primary display (since it's now default)
-                primary_overlay = standard_overlay
-                
                 original_b64 = pil_to_base64(pil_image_original)
-                overlay_b64 = cv2_to_base64(primary_overlay)
+                overlay_b64 = cv2_to_base64(overlay_cv_image)
 
-                # Prepare stats showing BOTH models clearly
                 image_stats = {
                     "filename": image_path.name,
-                    "grain_count": f"Standard: {standard_result.get('grain_count', 'N/A')} | Enhanced: {enhanced_result.get('grain_count', 'N/A')}",
-                    "avg_grain_size": f"Standard: {standard_result.get('avg_grain_size', 'N/A')} | Enhanced: {enhanced_result.get('avg_grain_size', 'N/A')}",
-                    "confidence": standard_result.get('average_pixel_confidence', 'N/A'),
-                    "model_used": "Both Models (Standard Display)",
-                    "standard_grains": standard_result.get('grain_count', 'N/A'),
-                    "enhanced_grains": enhanced_result.get('grain_count', 'N/A'),
-                    "standard_size": standard_result.get('avg_grain_size', 'N/A'),
-                    "enhanced_size": enhanced_result.get('avg_grain_size', 'N/A'),
-                    "models_processed": 2
+                    "grain_count": current_result.get('grain_count', 'N/A'),
+                    "avg_grain_size": current_result.get('avg_grain_size', 'N/A'),
+                    "confidence": current_result.get('average_pixel_confidence', 'N/A')
                 }
-                
+                if isinstance(image_stats["avg_grain_size"], (float, int)):
+                     image_stats["avg_grain_size"] = f"{image_stats['avg_grain_size']:.2f}"
                 if isinstance(image_stats["confidence"], (float, int)):
                      image_stats["confidence"] = f"{image_stats['confidence']:.3f}"
-                if isinstance(image_stats["standard_size"], (float, int)):
-                     image_stats["standard_size"] = f"{image_stats['standard_size']:.2f}"
-                if isinstance(image_stats["enhanced_size"], (float, int)):
-                     image_stats["enhanced_size"] = f"{image_stats['enhanced_size']:.2f}"
 
                 data = {
                     "type": "update",
