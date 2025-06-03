@@ -26,11 +26,11 @@ ENV/
 env/
 
 # PyTorch
-# Uncomment these if you want to exclude model files
-# *.pt
-# *.pth
-# *.pkl
-# *.onnx
+# Exclude large model files to prevent deployment issues
+*.pt
+*.pth
+*.pkl
+*.onnx
 
 # Jupyter Notebooks
 .ipynb_checkpoints

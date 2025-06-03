@@ -38,6 +38,11 @@ DEMO_IMAGE_DIR = Path(app.static_folder) / 'demo_images'
 MODEL_DIR = Path(app.static_folder) / 'model'
 MODEL_NAME = "grainboundary_model_ag_v1.pt"
 
+# Fallback to models directory if static/model doesn't exist
+if not MODEL_DIR.exists() or not (MODEL_DIR / MODEL_NAME).exists():
+    MODEL_DIR = models_dir
+    print(f"Using fallback model directory: {MODEL_DIR}")
+
 # Ensure directories exist
 DEMO_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -118,7 +123,7 @@ def live_demo_feed():
         print(f"DEBUG: SSE - Found {total_images} images to process.")
 
         if not images_to_process_paths:
-            error_data = {"type": "error", "message": "No demo images found."}
+            error_data = {"type": "error", "message": "Demo images not available in this deployment. The AI models are still functional for the /analyze endpoint."}
             yield f"data: {json.dumps(error_data)}\n\n"
             return
 
