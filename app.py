@@ -38,15 +38,34 @@ kb_dir = app_root_dir / "knowledge_base"
 # Demo configuration
 DEMO_IMAGE_DIR = Path(app.static_folder) / 'demo_images'
 MODEL_DIR = Path(app.static_folder) / 'model'
-MODEL_NAME = "grainboundary_model_ag_v1.pt"
+# Support multiple models
+AVAILABLE_MODELS = [
+    "grainboundary_model_ag_v1.pt",
+    "grainboundary_model_v1.pt"
+]
+DEFAULT_MODEL = "grainboundary_model_ag_v1.pt"
 
 # Remote demo images URL (GitHub releases or CDN)
 DEMO_IMAGES_URL = "https://github.com/danbones33/MetallographAI/releases/download/v1.1/demo_images.zip"
 
 # Fallback to models directory if static/model doesn't exist
-if not MODEL_DIR.exists() or not (MODEL_DIR / MODEL_NAME).exists():
+if not MODEL_DIR.exists():
     MODEL_DIR = models_dir
     print(f"Using fallback model directory: {MODEL_DIR}")
+
+# Check which models are actually available
+available_models_on_disk = []
+for model_name in AVAILABLE_MODELS:
+    if (MODEL_DIR / model_name).exists():
+        available_models_on_disk.append(model_name)
+        print(f"Found model: {model_name}")
+    else:
+        print(f"Model not found: {model_name}")
+
+if not available_models_on_disk:
+    print("Warning: No models found on disk!")
+else:
+    print(f"Available models: {available_models_on_disk}")
 
 # Ensure directories exist
 DEMO_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +75,7 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 analysis_stats = {}
 model_handler_instance = None
 image_processor_instance = None
+current_demo_model_index = 0  # Track which model to use in demo
 
 try:
     image_processor = ImageProcessor()
@@ -69,12 +89,12 @@ def get_model_handler():
         try:
             print(f"Initializing ModelHandler with model_dir: {str(MODEL_DIR)}")
             model_handler_instance = ModelHandler(model_dir=str(MODEL_DIR))
-            model_path = MODEL_DIR / MODEL_NAME
+            model_path = MODEL_DIR / DEFAULT_MODEL
             if not model_path.exists():
                 print(f"Critical: Model file not found at {model_path}")
                 return None 
-            print(f"Loading model: {MODEL_NAME}")
-            model_handler_instance.load_model(MODEL_NAME)
+            print(f"Loading model: {DEFAULT_MODEL}")
+            model_handler_instance.load_model(DEFAULT_MODEL)
             print("Model loaded successfully.")
         except Exception as e:
             print(f"Error initializing ModelHandler or loading model: {e}")
@@ -177,22 +197,56 @@ def live_demo_feed():
                 pil_image_original = Image.open(image_path).convert('RGB')
                 cv_image_bgr_original = cv2.cvtColor(np.array(pil_image_original), cv2.COLOR_RGB2BGR)
 
-                current_result = handler.run_inference(
-                    image_data=cv_image_bgr_original.copy(),
-                    model_name=MODEL_NAME
-                )
+                # Process with both grain boundary models
+                results_both_models = {}
+                overlays_both_models = {}
+                
+                for model_name in available_models_on_disk:
+                    try:
+                        current_result = handler.run_inference(
+                            image_data=cv_image_bgr_original.copy(),
+                            model_name=model_name
+                        )
+                        results_both_models[model_name] = current_result
+                        overlays_both_models[model_name] = img_processor.create_overlay(cv_image_bgr_original.copy(), current_result)
+                        print(f"DEBUG: Successfully processed with {model_name}")
+                    except Exception as model_e:
+                        print(f"DEBUG: Error with model {model_name}: {model_e}")
+                        # Use default model as fallback
+                        if model_name == DEFAULT_MODEL:
+                            raise model_e  # Re-raise if default model fails
+                        else:
+                            results_both_models[model_name] = results_both_models.get(DEFAULT_MODEL, {})
+                            overlays_both_models[model_name] = overlays_both_models.get(DEFAULT_MODEL, cv_image_bgr_original)
 
-                overlay_cv_image = img_processor.create_overlay(cv_image_bgr_original.copy(), current_result)
+                # Use the enhanced model (DEFAULT_MODEL) for primary display
+                primary_result = results_both_models.get(DEFAULT_MODEL, {})
+                primary_overlay = overlays_both_models.get(DEFAULT_MODEL, cv_image_bgr_original)
 
                 original_b64 = pil_to_base64(pil_image_original)
-                overlay_b64 = cv2_to_base64(overlay_cv_image)
+                overlay_b64 = cv2_to_base64(primary_overlay)
 
+                # Prepare stats showing both models
                 image_stats = {
                     "filename": image_path.name,
-                    "grain_count": current_result.get('grain_count', 'N/A'),
-                    "avg_grain_size": current_result.get('avg_grain_size', 'N/A'),
-                    "confidence": current_result.get('average_pixel_confidence', 'N/A')
+                    "grain_count": primary_result.get('grain_count', 'N/A'),
+                    "avg_grain_size": primary_result.get('avg_grain_size', 'N/A'),
+                    "confidence": primary_result.get('average_pixel_confidence', 'N/A'),
+                    "model_used": DEFAULT_MODEL
                 }
+                
+                # Add comparison stats if both models worked
+                if len(results_both_models) > 1:
+                    standard_result = results_both_models.get("grainboundary_model_v1.pt", {})
+                    enhanced_result = results_both_models.get("grainboundary_model_ag_v1.pt", {})
+                    
+                    image_stats["model_comparison"] = {
+                        "standard_grain_count": standard_result.get('grain_count', 'N/A'),
+                        "enhanced_grain_count": enhanced_result.get('grain_count', 'N/A'),
+                        "standard_avg_size": standard_result.get('avg_grain_size', 'N/A'),
+                        "enhanced_avg_size": enhanced_result.get('avg_grain_size', 'N/A')
+                    }
+                
                 if isinstance(image_stats["avg_grain_size"], (float, int)):
                      image_stats["avg_grain_size"] = f"{image_stats['avg_grain_size']:.2f}"
                 if isinstance(image_stats["confidence"], (float, int)):
@@ -273,6 +327,37 @@ def analyze():
         cv2.imwrite(output_path, result)
         
         return send_file(output_path, mimetype='image/png')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/models')
+def get_models():
+    """Get list of available models"""
+    return jsonify({
+        "available_models": available_models_on_disk,
+        "current_model": DEFAULT_MODEL,
+        "model_descriptions": {
+            "grainboundary_model_ag_v1.pt": "Grain Boundary Detection (Ag Enhanced)",
+            "grainboundary_model_v1.pt": "Grain Boundary Detection (Standard)"
+        }
+    })
+
+@app.route('/set_model', methods=['POST'])
+def set_model():
+    """Set the active model for analysis"""
+    data = request.get_json()
+    model_name = data.get('model_name')
+    
+    if model_name not in available_models_on_disk:
+        return jsonify({"error": f"Model {model_name} not available"}), 400
+    
+    try:
+        handler = get_model_handler()
+        if handler:
+            handler.load_model(model_name)
+            return jsonify({"success": True, "model": model_name})
+        else:
+            return jsonify({"error": "Model handler not available"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
