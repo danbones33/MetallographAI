@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Results - Grain Analyzer Demo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .error-message {
+            color: red;
+            background-color: #ffe0e0;
+            border: 1px solid red;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Analysis Results</h1>
+        </header>
+        
+        <section id="results-content">
+            {% if stats and stats.error %}
+                <div class="error-message">
+                    <h2>An Error Occurred</h2>
+                    <p>{{ stats.error }}</p>
+                </div>
+            {% elif stats %}
+                <h2>Demo Run Statistics</h2>
+                <table>
+                    <tr>
+                        <td>Total Images Processed:</td>
+                        <td>{{ stats.total_images_processed }}</td>
+                    </tr>
+                    <tr>
+                        <td>Total Grains Found (across all images):</td>
+                        <td>{{ stats.total_grains_found }}</td>
+                    </tr>
+                    <tr>
+                        <td>Overall Average Grain Size (approx.):</td>
+                        <td>{{ "%.2f" | format(stats.average_grain_size_overall if stats.average_grain_size_overall is not none else 0) }} units</td>
+                    </tr>
+                    <tr>
+                        <td>Total Processing Time:</td>
+                        <td>{{ "%.2f" | format(stats.total_processing_time_seconds if stats.total_processing_time_seconds is not none else 0) }} seconds</td>
+                    </tr>
+                    {% if stats.total_images_processed and stats.total_images_processed > 0 and stats.total_processing_time_seconds is not none %}
+                    <tr>
+                        <td>Average Processing Time per Image:</td>
+                        <td>{{ "%.3f" | format(stats.total_processing_time_seconds / stats.total_images_processed) }} seconds</td>
+                    </tr>
+                    {% endif %}
+                </table>
+                {% if stats.images_processed_details %}
+                    <h3>Per-Image Errors (if any):</h3>
+                    <ul>
+                    {% for detail in stats.images_processed_details %}
+                        {% if detail.error %}
+                            <li>{{ detail.filename }}: {{ detail.error }}</li>
+                        {% endif %}
+                    {% endfor %}
+                    </ul>
+                {% endif %}
+            {% else %}
+                <p>No statistics available or demo not yet run. Please go back and start the demo.</p>
+            {% endif %}
+        </section>
+        
+        <section id="actions">
+            <a href="{{ url_for('index') }}" class="button">Run Demo Again</a>
+        </section>
+        
+        <footer>
+            <p>Developed as a portfolio project.</p>
+        </footer>
+    </div>
+</body>
+</html> 

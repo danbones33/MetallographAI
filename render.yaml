@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: metallograph-ai
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn web:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.12
+    plan: free
+    autoDeploy: true 
