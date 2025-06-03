@@ -1,22 +1,51 @@
-from flask import Flask, request, jsonify, send_file
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
+from flask import Flask, render_template, Response, request, jsonify, send_file
 from flask_cors import CORS
+import sys
+from pathlib import Path
+import time
 import cv2
 import numpy as np
+from PIL import Image
 import torch
-from components.image_processor import ImageProcessor
-from components.model_handler import ModelHandler
-from pathlib import Path
-import os
+import json
+import base64
+import io
 import tempfile
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+cv2.setNumThreads(1)
+torch.set_num_threads(1)
 
-# Initialize components
+# Import components
+from components.image_processor import ImageProcessor
+from components.model_handler import ModelHandler
+
+app = Flask(__name__)
+CORS(app)
+
+# Configuration
 app_root_dir = Path(__file__).resolve().parent
 models_dir = app_root_dir / "models"
 exports_dir = app_root_dir / "exports"
 kb_dir = app_root_dir / "knowledge_base"
+
+# Demo configuration
+DEMO_IMAGE_DIR = Path(app.static_folder) / 'demo_images'
+MODEL_DIR = Path(app.static_folder) / 'model'
+MODEL_NAME = "grainboundary_model_ag_v1.pt"
+
+# Ensure directories exist
+DEMO_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+# Global instances
+analysis_stats = {}
+model_handler_instance = None
+image_processor_instance = None
 
 try:
     image_processor = ImageProcessor()
@@ -24,64 +53,153 @@ try:
 except Exception as e:
     print(f"Warning: Could not initialize some components: {e}")
 
+def get_model_handler():
+    global model_handler_instance
+    if model_handler_instance is None:
+        try:
+            print(f"Initializing ModelHandler with model_dir: {str(MODEL_DIR)}")
+            model_handler_instance = ModelHandler(model_dir=str(MODEL_DIR))
+            model_path = MODEL_DIR / MODEL_NAME
+            if not model_path.exists():
+                print(f"Critical: Model file not found at {model_path}")
+                return None 
+            print(f"Loading model: {MODEL_NAME}")
+            model_handler_instance.load_model(MODEL_NAME)
+            print("Model loaded successfully.")
+        except Exception as e:
+            print(f"Error initializing ModelHandler or loading model: {e}")
+            model_handler_instance = None
+            return None
+    return model_handler_instance
+
+def get_image_processor():
+    global image_processor_instance
+    if image_processor_instance is None:
+        print("Initializing ImageProcessor.")
+        image_processor_instance = ImageProcessor()
+    return image_processor_instance
+
+def pil_to_base64(pil_image, format="jpeg"):
+    buffered = io.BytesIO()
+    pil_image.save(buffered, format=format.upper())
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+def cv2_to_base64(cv2_image, format=".jpg"):
+    is_success, buffer = cv2.imencode(format, cv2_image)
+    if not is_success:
+        raise ValueError(f"Could not encode cv2 image to {format}")
+    return base64.b64encode(buffer).decode('utf-8')
+
 @app.route('/')
-def home():
-    return """
-    <html>
-        <head>
-            <title>MetallographAI</title>
-            <style>
-                body {
-                    background-color: #0a0a0a;
-                    color: #00ff41;
-                    font-family: 'Orbitron', sans-serif;
-                    margin: 0;
-                    padding: 20px;
+def index():
+    """Serves the start screen."""
+    return render_template('index.html')
+
+@app.route('/live_demo_feed')
+def live_demo_feed():
+    def generate_updates():
+        handler = get_model_handler()
+        img_processor = get_image_processor()
+
+        if handler is None:
+            error_data = {"type": "error", "message": "Failed to load AI model."}
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        if img_processor is None:
+            error_data = {"type": "error", "message": "Failed to load Image Processor."}
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        print("DEBUG: SSE - Attempting to process images...")
+        image_files_paths = [f for f in DEMO_IMAGE_DIR.iterdir() if f.is_file() and f.suffix.lower() in ['.jpg', '.png', '.jpeg', '.bmp', '.tiff']]
+        images_to_process_paths = image_files_paths[:50]
+        total_images = len(images_to_process_paths)
+        print(f"DEBUG: SSE - Found {total_images} images to process.")
+
+        if not images_to_process_paths:
+            error_data = {"type": "error", "message": "No demo images found."}
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'start', 'total_images': total_images})}\n\n"
+        time.sleep(0.1)
+
+        for i, image_path in enumerate(images_to_process_paths):
+            try:
+                print(f"DEBUG: SSE - Processing image {i+1}/{total_images}: {image_path.name}")
+                pil_image_original = Image.open(image_path).convert('RGB')
+                cv_image_bgr_original = cv2.cvtColor(np.array(pil_image_original), cv2.COLOR_RGB2BGR)
+
+                current_result = handler.run_inference(
+                    image_data=cv_image_bgr_original.copy(),
+                    model_name=MODEL_NAME
+                )
+
+                overlay_cv_image = img_processor.create_overlay(cv_image_bgr_original.copy(), current_result)
+
+                original_b64 = pil_to_base64(pil_image_original)
+                overlay_b64 = cv2_to_base64(overlay_cv_image)
+
+                image_stats = {
+                    "filename": image_path.name,
+                    "grain_count": current_result.get('grain_count', 'N/A'),
+                    "avg_grain_size": current_result.get('avg_grain_size', 'N/A'),
+                    "confidence": current_result.get('average_pixel_confidence', 'N/A')
                 }
-                .container {
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    padding: 20px;
-                    border-radius: 10px;
+                if isinstance(image_stats["avg_grain_size"], (float, int)):
+                     image_stats["avg_grain_size"] = f"{image_stats['avg_grain_size']:.2f}"
+                if isinstance(image_stats["confidence"], (float, int)):
+                     image_stats["confidence"] = f"{image_stats['confidence']:.3f}"
+
+                data = {
+                    "type": "update",
+                    "current_image_index": i + 1,
+                    "total_images": total_images,
+                    "image_filename": image_path.name,
+                    "original_image_base64": original_b64,
+                    "overlay_image_base64": overlay_b64,
+                    "stats": image_stats
                 }
-                h1 {
-                    text-align: center;
-                    color: #00ff41;
+                yield f"data: {json.dumps(data)}\n\n"
+                time.sleep(1)
+
+            except Exception as e_img:
+                print(f"Error processing image {image_path.name} for SSE: {e_img}")
+                error_data = {
+                    "type": "image_error",
+                    "filename": image_path.name,
+                    "message": str(e_img),
+                    "current_image_index": i + 1,
+                    "total_images": total_images
                 }
-                .metrics {
-                    display: flex;
-                    justify-content: space-around;
-                    margin: 20px 0;
-                }
-                .metric {
-                    text-align: center;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>MetallographAI Knowledge Base</h1>
-                <div class="metrics">
-                    <div class="metric">
-                        <h3>Accuracy</h3>
-                        <p>94.7%</p>
-                    </div>
-                    <div class="metric">
-                        <h3>Inference Time</h3>
-                        <p>2.3ms</p>
-                    </div>
-                </div>
-                <h2>API Endpoints:</h2>
-                <ul>
-                    <li>POST /analyze - Analyze metallographic image</li>
-                    <li>GET /health - Check system status</li>
-                </ul>
-            </div>
-        </body>
-    </html>
-    """
+                yield f"data: {json.dumps(error_data)}\n\n"
+                time.sleep(1)
+
+        yield f"data: {json.dumps({'type': 'end', 'message': 'Demo complete!'})}\n\n"
+
+    return Response(generate_updates(), mimetype='text/event-stream')
+
+@app.route('/start_demo', methods=['POST'])
+def start_demo():
+    """Triggers the image analysis demo."""
+    global analysis_stats
+    
+    analysis_stats = {
+        "total_images_processed": 0,
+        "total_grains_found": 0,
+        "average_grain_size_overall": 0.0,
+        "total_processing_time_seconds": 0.0,
+        "images_processed_details": [],
+        "error": None
+    }
+    
+    return jsonify({"status": "Demo started", "redirect": "/results"})
+
+@app.route('/results')
+def results():
+    global analysis_stats
+    return render_template('results.html', stats=analysis_stats)
 
 @app.route('/health')
 def health():
@@ -98,15 +216,12 @@ def analyze():
     
     file = request.files['image']
     
-    # Read and process the image
     img_array = np.frombuffer(file.read(), np.uint8)
     image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     
-    # Process the image
     try:
         result = model_handler.process_image(image)
         
-        # Save the result to a temporary file
         temp_dir = tempfile.mkdtemp()
         output_path = os.path.join(temp_dir, 'result.png')
         cv2.imwrite(output_path, result)
