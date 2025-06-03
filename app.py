@@ -153,15 +153,18 @@ def live_demo_feed():
         if not images_to_process_paths:
             # Try to download demo images
             yield f"data: {json.dumps({'type': 'status', 'message': 'Downloading demo images...'})}\n\n"
-            if download_demo_images():
+            download_success = download_demo_images()
+            if download_success:
                 # Retry finding images after download
                 image_files_paths = [f for f in DEMO_IMAGE_DIR.iterdir() if f.is_file() and f.suffix.lower() in ['.jpg', '.png', '.jpeg', '.bmp', '.tiff']]
                 images_to_process_paths = image_files_paths[:50]
                 total_images = len(images_to_process_paths)
                 print(f"DEBUG: SSE - After download, found {total_images} images to process.")
+            else:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Download failed, checking alternative sources...'})}\n\n"
             
             if not images_to_process_paths:
-                error_data = {"type": "error", "message": "Demo images not available in this deployment. The AI models are still functional for the /analyze endpoint."}
+                error_data = {"type": "error", "message": "Live demo temporarily unavailable. Please try the /analyze endpoint to upload your own metallographic images for AI analysis!"}
                 yield f"data: {json.dumps(error_data)}\n\n"
                 return
 
