@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import cv2
 import numpy as np
 import torch
@@ -9,6 +10,7 @@ import os
 import tempfile
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Initialize components
 app_root_dir = Path(__file__).resolve().parent
@@ -107,4 +109,5 @@ def analyze():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8000))) 
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port) 
