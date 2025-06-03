@@ -18,8 +18,11 @@ models_dir = app_root_dir / "models"
 exports_dir = app_root_dir / "exports"
 kb_dir = app_root_dir / "knowledge_base"
 
-image_processor = ImageProcessor()
-model_handler = ModelHandler(model_dir=models_dir)
+try:
+    image_processor = ImageProcessor()
+    model_handler = ModelHandler(model_dir=models_dir)
+except Exception as e:
+    print(f"Warning: Could not initialize some components: {e}")
 
 @app.route('/')
 def home():
@@ -82,7 +85,11 @@ def home():
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "healthy"})
+    return jsonify({
+        "status": "healthy",
+        "port": os.environ.get('PORT', 'not set'),
+        "python_version": os.environ.get('PYTHON_VERSION', 'not set')
+    })
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -109,5 +116,5 @@ def analyze():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
+    port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port) 
