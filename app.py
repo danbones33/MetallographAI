@@ -41,7 +41,7 @@ MODEL_DIR = Path(app.static_folder) / 'model'
 MODEL_NAME = "grainboundary_model_ag_v1.pt"
 
 # Remote demo images URL (GitHub releases or CDN)
-DEMO_IMAGES_URL = "https://github.com/danbones33/MetallographAI/releases/download/v1.0/demo_images.zip"
+DEMO_IMAGES_URL = "https://github.com/danbones33/MetallographAI/releases/download/v1.1/demo_images.zip"
 
 # Fallback to models directory if static/model doesn't exist
 if not MODEL_DIR.exists() or not (MODEL_DIR / MODEL_NAME).exists():
